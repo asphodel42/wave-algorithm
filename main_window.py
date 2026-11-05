@@ -25,6 +25,7 @@ from PyQt6.QtWidgets import (
 )
 
 from animation import AnimationController
+from bidirectional import BiEvent, bi_wave_search, solve_bi
 from maze import FREE, Maze
 from maze_view import MazeView
 from results_window import RunRecord, ResultsWindow, cell_label
@@ -37,7 +38,7 @@ SIZE_RANGE = (5, 40)
 class MainWindow(QMainWindow):
     def __init__(self, maze: Maze) -> None:
         super().__init__()
-        self.setWindowTitle("Хвильовий пошук у лабіринті")
+        self.setWindowTitle("Двонаправлений хвильовий пошук у лабіринті")
         self.resize(1150, 800)
 
         self.maze = maze
@@ -129,12 +130,17 @@ class MainWindow(QMainWindow):
     def build_search_box(self) -> QGroupBox:
         box = QGroupBox("Пошук")
         layout = QVBoxLayout(box)
+        self.mode_input = QComboBox()
+        self.mode_input.addItem("Двонаправлений", True)
+        self.mode_input.addItem("Однонаправлений", False)  # kept for comparison with lab 3
         self.operator_input = QComboBox()
         for key, label in OPERATOR_LABELS.items():
             self.operator_input.addItem(label, key)
-        # a recorded run belongs to one operator: switching it must not replay the old wave
+        # a recorded run belongs to one mode and operator: switching must not replay the old wave
+        self.mode_input.currentIndexChanged.connect(self.maze_changed)
         self.operator_input.currentIndexChanged.connect(self.maze_changed)
         form = QFormLayout()
+        form.addRow("Пошук:", self.mode_input)
         form.addRow("Оператор:", self.operator_input)
         layout.addLayout(form)
         numbers = QCheckBox("Показувати числа в клітинках")
@@ -246,8 +252,9 @@ class MainWindow(QMainWindow):
 
     def run_search(self) -> None:
         operator = self.operator_input.currentData()
-        result = solve(self.maze, operator)  # timed separately from the animation frames
-        self.animation.load(list(wave_search(self.maze, operator)))
+        bi = self.mode_input.currentData()
+        result = (solve_bi if bi else solve)(self.maze, operator)  # timed separately from the animation frames
+        self.animation.load(list((bi_wave_search if bi else wave_search)(self.maze, operator)))
         self.pending_record = RunRecord(
             operator, f"{self.maze.rows}x{self.maze.cols}", self.maze.wall_ratio(),
             self.maze.start, self.maze.target, result,
@@ -257,12 +264,26 @@ class MainWindow(QMainWindow):
 
     def on_step(self, event: WaveEvent) -> None:
         self.view.show_event(event)
+        if isinstance(event, BiEvent):
+            self.statusBar().showMessage(self.bi_status(event))
+            return
         text = f"Хвиля {event.wave}: фронт {len(event.front)}, розкрито {event.expanded}"
         if event.kind == WaveKind.FOUND:
             text += f" - ціль знайдено, довжина {len(event.path) - 1}"
         elif event.kind == WaveKind.DONE:
             text += " - хвиля згасла, ціль недосяжна"
         self.statusBar().showMessage(text)
+
+    @staticmethod
+    def bi_status(event: BiEvent) -> str:
+        wave = {"s": f"хвиля від старту {event.wave}", "t": f"хвиля від цілі {event.wave}'"}.get(event.side, "старт")
+        text = (f"Цикл {event.cycle}: {wave}; фронти {len(event.front)} / {len(event.back_front)}, "
+                f"розкрито {event.expanded}")
+        if event.kind == WaveKind.FOUND:
+            text += f" - хвилі зустрілись у {cell_label(event.meet)}, довжина {len(event.path) - 1}"
+        elif event.kind == WaveKind.DONE:
+            text += " - одна з хвиль згасла, ціль недосяжна"
+        return text
 
     def on_finished(self, _found: bool) -> None:
         self.play_button.setText("Пуск")

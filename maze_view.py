@@ -2,6 +2,7 @@ from PyQt6.QtCore import QPointF, QRectF, Qt, pyqtSignal
 from PyQt6.QtGui import QColor, QFont, QPainter, QPen, QPolygonF
 from PyQt6.QtWidgets import QWidget
 
+from bidirectional import BiEvent
 from maze import WALL, Cell, Maze
 from wave_algorithm import WaveEvent
 
@@ -10,6 +11,9 @@ WALL_COLOR = QColor("#424242")
 FREE_COLOR = QColor("#f5f5f5")
 LABELLED_COLOR = QColor("#c8e6c9")
 FRONT_COLOR = QColor("#fff9c4")
+BACK_LABELLED_COLOR = QColor("#ffe0b2")  # wave from the target
+BACK_FRONT_COLOR = QColor("#ffb74d")
+MEET_COLOR = QColor("#ab47bc")
 PATH_COLOR = QColor("#42a5f5")
 START_COLOR = QColor("#66bb6a")
 TARGET_COLOR = QColor("#ef5350")
@@ -17,7 +21,11 @@ GRID_COLOR = QColor("#bdbdbd")
 
 
 class MazeView(QWidget):
-    """Draws the maze matrix, the wave labels of the current event and the found path."""
+    """Draws the maze matrix, the wave labels of the current event and the found path.
+
+    For a two-directional event the start wave is green/yellow, the target wave orange,
+    target labels are primed (5') and the meeting cell is purple.
+    """
 
     cell_clicked = pyqtSignal(int, int, bool)  # row, col, True while dragging with the button held
 
@@ -73,6 +81,10 @@ class MazeView(QWidget):
         front = set(ev.front) if ev else set()
         path = (ev.path or []) if ev else []
         on_path = set(path)
+        bi = isinstance(ev, BiEvent)
+        back = ev.back_marks if bi else None
+        back_front = set(ev.back_front) if bi else set()
+        meet = ev.meet if bi else None
         font = QFont(self.font())
         font.setPixelSize(max(int(size * 0.38), 6))
         p.setFont(font)
@@ -83,14 +95,21 @@ class MazeView(QWidget):
         for r in range(self.maze.rows):
             for c in range(self.maze.cols):
                 v = values[r][c]
+                b = back[r][c] if back else 0
                 if v == WALL:
                     color = WALL_COLOR
+                elif (r, c) == meet:
+                    color = MEET_COLOR
                 elif (r, c) in on_path:
                     color = PATH_COLOR
                 elif (r, c) in front:
                     color = FRONT_COLOR
+                elif (r, c) in back_front:
+                    color = BACK_FRONT_COLOR
                 elif v > 0:
                     color = LABELLED_COLOR
+                elif b > 0:
+                    color = BACK_LABELLED_COLOR
                 else:
                     color = FREE_COLOR
                 p.fillRect(rect((r, c)), color)
@@ -105,8 +124,12 @@ class MazeView(QWidget):
             for r in range(self.maze.rows):
                 for c in range(self.maze.cols):
                     v = values[r][c]
-                    p.setPen(QColor("#f5f5f5") if v == WALL else QColor("#212121"))
-                    p.drawText(rect((r, c)), Qt.AlignmentFlag.AlignCenter, str(v))
+                    b = back[r][c] if back else 0
+                    text = str(v)
+                    if b > 0:
+                        text = f"{v}/{b}'" if v > 0 else f"{b}'"
+                    p.setPen(QColor("#f5f5f5") if v == WALL or (r, c) == meet else QColor("#212121"))
+                    p.drawText(rect((r, c)), Qt.AlignmentFlag.AlignCenter, text)
 
         for cell, color in ((self.maze.start, START_COLOR), (self.maze.target, TARGET_COLOR)):
             p.setPen(QPen(color, max(size * 0.14, 3)))
